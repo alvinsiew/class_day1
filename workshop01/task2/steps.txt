@@ -1,5 +1,5 @@
 # Create network
-docker network create -d bridge mynet
+docker network create mynet
 
 # Create volume
 docker volume create mydb
