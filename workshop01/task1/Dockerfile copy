@@ -1,0 +1,20 @@
+ARG GO_VER=alpine3.15
+
+FROM golang:${GO_VER}
+
+ARG APP_DIR=/app
+
+WORKDIR ${APP_DIR}
+
+ADD . .
+
+ENV GOOS=linux
+ENV GOARCH=amd64
+
+RUN go build main.go
+
+HEALTHCHECK  --interval=5m --timeout=3s \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/healthz || exit 1
+
+CMD "./main"
+# RUN ["./main"] 
