@@ -1,0 +1,255 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    name: bggns
+  name: bggns
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: bggns
+  name: data-pvc
+  labels:
+    name: data-pvc
+spec:
+  resources:
+    requests:
+      storage: 1Gi
+  # volumeMode: Filesystem
+  storageClassName: do-block-storage
+  accessModes:
+    - ReadWriteOnce
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: bggns
+  labels:
+    name: bggdb-deploy
+  name: bggdb-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: bgg-db
+  template:
+    metadata:
+      name: bgg-db
+      labels:
+        name: bgg-db
+    spec:
+      volumes:
+      - name: bggdb-vol
+        persistentVolumeClaim:
+          claimName: data-pvc
+      containers:
+      - name: bgg-db
+        image: stackupiss/bgg-database:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+          - name: bggdb-port
+            containerPort: 3306
+        volumeMounts:
+        - name: bggdb-vol
+          mountPath: /var/lib/mysql
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: bggns
+  name: bggdb-svc
+  labels:
+    name: bggdb-svc
+spec:
+  type: ClusterIP
+  selector:
+    name: bgg-db
+  ports:
+  - port: 3306
+    targetPort: bggdb-port
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    name: bggapp-secret
+  namespace: bggns
+  name: bggapp-secret
+type: Opaque
+data:
+  password: Y2hhbmdlaXQ=
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: bggns
+  name: bggapp-cm
+data:
+  db_user: "root"
+  db_host: "bggdb-svc"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: bggns
+  labels:
+    name: bggappv1-deploy
+  name: bggappv1-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      name: bggv1-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      name: bggv1-app
+      labels:
+        name: bggv1-app
+    spec:
+      containers:
+      - name: bgg-app
+        image: stackupiss/bgg-backend:v1
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        env:
+        - name: BGG_DB_USER
+          valueFrom:
+           configMapKeyRef:
+            name: bggapp-cm
+            key: db_user
+        - name: BGG_DB_HOST
+          valueFrom:
+           configMapKeyRef:
+            name: bggapp-cm
+            key: db_host
+        - name: BGG_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bggapp-secret
+              key: password
+        ports:
+          - name: bggapp-port
+            containerPort: 3000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: bggns
+  name: bggappv1-svc
+  labels:
+    name: bggappv1-svc
+spec:
+  type: ClusterIP
+  selector:
+    name: bgg-app
+  ports:
+  - port: 8080
+    targetPort: bggapp-port
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: bggns
+  labels:
+    name: bggappv2-deploy
+  name: bggappv2-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      name: bgg-appv2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      name: bgg-appv2
+      labels:
+        name: bgg-appv2
+    spec:
+      containers:
+      - name: bgg-app
+        image: stackupiss/bgg-backend:v2
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        env:
+        - name: BGG_DB_USER
+          valueFrom:
+           configMapKeyRef:
+            name: bggapp-cm
+            key: db_user
+        - name: BGG_DB_HOST
+          valueFrom:
+           configMapKeyRef:
+            name: bggapp-cm
+            key: db_host
+        - name: BGG_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bggapp-secret
+              key: password
+        ports:
+          - name: bggapp-port
+            containerPort: 3000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: bggns
+  name: bggappv2-svc
+  labels:
+    name: bggappv2-svc
+spec:
+  type: ClusterIP
+  selector:
+    name: bggv2-app
+  ports:
+  - port: 8080
+    targetPort: bggapp-port
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: bggns
+  name: bgg-ing
+  labels:
+    name: bgg-ing
+  annotation: 
+spec:
+  ingressClassName: nginx
+  rules:
+  # - host: dov.146.190.4.102.nip.io
+  - http:
+      paths:
+      - pathType: Prefix
+        path: "/v2"
+        backend:
+          service:
+            name: bggappv2-svc
+            port: 
+              number: 8080

@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: myns
+  name: data-pvc
+  labels:
+    name: data-pvc
+spec:
+  resources:
+    requests:
+      storage: 1Gi
+  # volumeMode: Filesystem
+  storageClassName: do-block-storage
+  accessModes:
+    - ReadWriteOnce
