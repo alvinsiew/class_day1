@@ -120,9 +120,12 @@ spec:
         name: bggv1-app
     spec:
       containers:
-      - name: bgg-app
+      - name: bggv1-app
         image: stackupiss/bgg-backend:v1
         imagePullPolicy: IfNotPresent
+        args: 
+         - --prefix
+         - /v1
         resources:
           limits:
             memory: "128Mi"
@@ -144,7 +147,7 @@ spec:
               name: bggapp-secret
               key: password
         ports:
-          - name: bggapp-port
+          - name: bggappv1-port
             containerPort: 3000
 
 ---
@@ -158,10 +161,10 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    name: bgg-app
+    name: bggv1-app
   ports:
   - port: 8080
-    targetPort: bggapp-port
+    targetPort: bggappv1-port
 
 ---
 apiVersion: apps/v1
@@ -175,7 +178,7 @@ spec:
   replicas: 3
   selector:
     matchLabels:
-      name: bgg-appv2
+      name: bggv2-app
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -183,14 +186,17 @@ spec:
       maxUnavailable: 1
   template:
     metadata:
-      name: bgg-appv2
+      name: bggv2-app
       labels:
-        name: bgg-appv2
+        name: bggv2-app
     spec:
       containers:
-      - name: bgg-app
+      - name: bggv2-app
         image: stackupiss/bgg-backend:v2
         imagePullPolicy: IfNotPresent
+        args: 
+         - --prefix
+         - /v2
         resources:
           limits:
             memory: "128Mi"
@@ -212,7 +218,7 @@ spec:
               name: bggapp-secret
               key: password
         ports:
-          - name: bggapp-port
+          - name: bggappv2-port
             containerPort: 3000
 
 ---
@@ -229,7 +235,7 @@ spec:
     name: bggv2-app
   ports:
   - port: 8080
-    targetPort: bggapp-port
+    targetPort: bggappv2-port
 
 ---
 apiVersion: networking.k8s.io/v1
@@ -239,17 +245,49 @@ metadata:
   name: bgg-ing
   labels:
     name: bgg-ing
-  annotation: 
+  # annotations:
+  #   nginx.ingress.kubernetes.io/rewrite-target: "/$1"
+    # nginx.ingress.kubernetes.io/proxy-redirect-from: "http://146.190.4.102/"
+    # nginx.ingress.kubernetes.io/proxy-redirect-to: "http://146.190.4.102/$1"
+    # nginx.ingress.kubernetes.io/app-root: /v2
 spec:
   ingressClassName: nginx
   rules:
-  # - host: dov.146.190.4.102.nip.io
-  - http:
+  - host: dov.146.190.4.102.nip.io
+    http:
       paths:
-      - pathType: Prefix
-        path: "/v2"
+      - path: /v2
+        pathType: Prefix
         backend:
           service:
             name: bggappv2-svc
             port: 
               number: 8080
+      - path: /v1
+        pathType: Prefix
+        backend:
+          service:
+            name: bggappv1-svc
+            port: 
+              number: 8080
+
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+ namespace: bggns
+ name: dov-hpa
+spec:
+ scaleTargetRef:
+   apiVersion: apps/v1
+   kind: Deployment
+   name: bggappv1-deploy
+ minReplicas: 1
+ maxReplicas: 10
+ metrics:
+ - type: Resource
+   resource:
+    name: cpu
+    target:
+      type: Utilization
+      averageUtilization: 50
