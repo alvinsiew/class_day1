@@ -1,0 +1,225 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: myns
+  name: wpdb-secret
+  labels:
+    name: wpdb-secret
+type: Opaque
+data:
+  # ROOT_PASSWORD: abc123 $(echo -n "not-so-secure" | base64)
+  ROOT_PASSWORD: YWJjMTIz
+
+---
+apiVersion: mysql.presslabs.org/v1alpha1
+kind: MysqlCluster
+metadata:
+  namespace: myns
+  name: wpdb-cluster
+  labels:
+    name: wpdb-cluster
+spec:
+  replicas: 1
+  secretName: wpdb-secret
+  mysqlVersion: "8.0"
+  volumeSpec:
+    persistentVolumeClaim:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests: 
+          storage: 1Gi
+      storageClassName: do-block-storage
+  initFileExtraSQL:
+    - "CREATE DATABASE wordpress"
+      
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    name: wpapp-secret
+  namespace: myns
+  name: wpapp-secret
+type: Opaque
+data:
+  wordpress_db_host: d3BkYi1jbHVzdGVyLW15c3FsLW1hc3Rlci5teW5zLnN2Yy5jbHVzdGVyLmxvY2Fs
+  wordpress_db_user: cm9vdA==
+  wordpress_db_password: YWJjMTIz
+  wordpress_db_name: d29yZHByZXNz
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: myns
+  name: wpapp-pvc
+  labels:
+    name: wpapp-pvc
+spec:
+  resources:
+    requests:
+      storage: 1Gi
+  # volumeMode: Filesystem
+  storageClassName: do-block-storage
+  accessModes:
+    - ReadWriteOnce
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: myns
+  labels:
+    name: wpapp-deploy
+  name: wpapp-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: wpapp-pod
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      name: wpapp-pod
+      labels:
+        name: wpapp-pod
+    spec:
+      volumes:
+      - name: wpapp-vol
+        persistentVolumeClaim:
+          claimName: wpapp-pvc
+      containers:
+      - name: wpapp-pod
+        image: wordpress:5.9.2
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        env:
+        - name: WORDPRESS_DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: wpapp-secret
+              key: wordpress_db_host
+        - name: WORDPRESS_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: wpapp-secret
+              key: wordpress_db_user
+        - name: WORDPRESS_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: wpapp-secret
+              key: wordpress_db_password
+        - name: WORDPRESS_DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: wpapp-secret
+              key: wordpress_db_name
+        ports:
+          - name: wpapp-port
+            containerPort: 80
+        volumeMounts:
+        - name: wpapp-vol
+          mountPath: /var/www/html
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: myns
+  name: wpapp-svc
+  labels:
+    name: wpapp-svc
+spec:
+  type: ClusterIP
+  selector:
+    name: wpapp-pod
+  ports:
+  - port: 80
+    targetPort: wpapp-port
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: myns
+  name: wpapp-ing
+  labels:
+    name: wpapp-ing
+# annotations:
+#   nginx.ingress.kubernetes.io/limit-rps: 5
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: dov.139.59.217.238.nip.io
+      http:
+        paths:
+          - pathType: Prefix
+            path: /
+            backend:
+              service:
+                name: wpapp-svc
+                port:
+                  number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: myns
+  name: dov-wpapp-nwp
+  labels:
+    name: dov-wpapp-nwp
+spec:
+  podSelector:
+    matchLabels:
+      name: wpapp-pod
+  policyTypes:
+  - Ingress
+  # - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+         kubernetes.io/metadata.name: ingress-nginx
+    - podSelector:
+        matchLabels:
+         app.kubernetes.io/instance: my-ingress
+  # egress:
+  # - to:
+  #   - ipBlock:
+  #       cidr: 10.244.0.0/24
+    # - namk get papp.kubernetes.io/component: database
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: myns
+  name: dov-wpdb-nwp
+  labels:
+    name: dov-wpdb-nwp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: database
+  policyTypes:
+  - Ingress
+  # - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+         name: wpapp-pod
+  # egress:
+  # - to:
+  #   - podSelector:
+  #       matchLabels:
+  #        name: wpapp-pod
